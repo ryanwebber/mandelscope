@@ -1,8 +1,10 @@
+use rug::ops::CompleteRound;
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::{
     gui, pipeline,
+    precision::PRECISION,
     storage::{self, Storable},
 };
 
@@ -50,6 +52,12 @@ pub struct Timing {
 
 pub struct Globals {
     pub timing: Timing,
+    pub viewport: Viewport,
+}
+
+pub struct Viewport {
+    pub zoom: rug::Float,
+    pub center: rug::Complex,
 }
 
 pub struct Pipelines {
@@ -89,6 +97,12 @@ impl State {
                     last_checkpoint: now,
                     frames_since_last_checkpoint: 0,
                 }
+            },
+            viewport: Viewport {
+                zoom: rug::Float::with_val(PRECISION, 1.0),
+                center: rug::Complex::parse("(0.001643721971153 -0.822467633298876)")
+                    .expect("Unable to parse complex number")
+                    .complete((PRECISION, PRECISION)),
             },
         };
 

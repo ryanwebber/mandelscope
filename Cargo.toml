@@ -10,6 +10,7 @@ bytemuck = { version = "1.13.1", features = ["derive"] }
 egui = "0.22.0"
 egui-wgpu = { version = "0.22.0", features = ["winit"] }
 egui-winit = "0.22.0"
+egui_extras = "0.22.0"
 encase = { version = "0.6.1", features = ["glam"] }
 env_logger = "0.10.0"
 glam = { version = "0.24.1", features = ["serde"] }
@@ -17,5 +18,6 @@ gltf = "1.2.0"
 nanorand = "0.7.0"
 pollster = "0.3.0"
 rand = "0.8.5"
+rug = "1.19.2"
 wgpu = "0.16.2"
 winit = "0.28.6"

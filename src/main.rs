@@ -1,6 +1,7 @@
 mod app;
 mod gui;
 mod pipeline;
+mod precision;
 mod storage;
 
 use app::State;
