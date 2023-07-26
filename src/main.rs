@@ -1,4 +1,5 @@
 mod app;
+mod gui;
 mod pipeline;
 mod storage;
 
@@ -52,7 +53,7 @@ async fn run() -> Result<(), String> {
         }
         Event::RedrawRequested(window_id) if window_id == window.id() => {
             state.update();
-            match state.render() {
+            match state.render(&window) {
                 Ok(_) => {}
                 // Reconfigure the surface if lost
                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size()),
