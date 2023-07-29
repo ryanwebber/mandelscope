@@ -7,3 +7,5 @@ A renderer and explorer for the mandelbrot set fractal build with [wgpu](https:/
 ```bash
 cargo run --release
 ```
+
+![Mandelbrot set](.github/screenshot.png?raw=true)
