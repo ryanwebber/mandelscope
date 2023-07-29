@@ -66,6 +66,11 @@ where
 #[derive(ShaderType)]
 pub struct Globals {
     pub time: f32,
+    pub scale: f32,
+    pub radius: f32,
+    pub center: f32::Vec2,
+    pub orbit_offset: f32::Vec2,
+    pub coefficients: [f32::Vec4; 4],
 }
 
 #[repr(C)]

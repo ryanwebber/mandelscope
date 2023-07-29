@@ -1,26 +1,72 @@
 
+// ======================== Structs =======================
+
 struct Globals {
     time: f32,
+    scale: f32,
+    radius: f32,
+    center: vec2<f32>,
+    orbit_offset: vec2<f32>,
+    coefficients: array<vec4<f32>, 4>,
 }
 
-fn mandelbrot(p: vec2<f32>, max_iterations: u32) -> f32 {
-    var i: u32 = 0u;
-    var a: f32 = 0.0;
-    var b: f32 = 0.0;
-    while (a*a + b*b < 4.0 && i < max_iterations) {
-        let a_ = a*a - b*b + p.x;
-        let b_ = 2.0*a*b + p.y;
-        a = a_;
-        b = b_;
-        i = i + 1u;
-    }
-    return f32(i) / f32(max_iterations);
+struct OrbitBuffer {
+    iterations: u32,
+    orbits: array<vec2<f32>>,
 }
+
+// ================== Mandelbrot function =================
+
+fn mandelbrot(d0: vec2<f32>) -> f32 {
+    let a = globals.coefficients[0u].xy;
+    let b = globals.coefficients[1u].xy;
+    let c = globals.coefficients[2u].xy;
+    let d = globals.coefficients[3u].xy;
+
+    var dn = cxmul(a, d0) + cxmul(b, cxpow(d0, 2.0)) + cxmul(c, cxpow(d0, 3.0)) + cxmul(d, cxpow(d0, 4.0));
+    var xn = vec2<f32>(0.0, 0.0);
+
+    var i = 0u;
+    for (; i < orbit_buffer.iterations; i += 1u) {
+        xn = orbit_buffer.orbits[i];
+        dn = cxmul(2.0 * xn + dn, dn) + d0;
+        if (length(dn) > globals.radius) {
+            break;
+        }
+    }
+
+    return f32(i) / f32(orbit_buffer.iterations);
+}
+
+// ================ Complex Math functions ================
+
+fn cxmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        a.x * b.x - a.y * b.y,
+        a.x * b.y + a.y * b.x
+    );
+}
+
+fn cxpow(a: vec2<f32>, b: f32) -> vec2<f32> {
+    let r = length(a);
+    let theta = atan2(a.y, a.x);
+    let rprime = pow(r, b);
+    let thetaprime = theta * b;
+    return vec2<f32>(
+        rprime * cos(thetaprime),
+        rprime * sin(thetaprime)
+    );
+}
+
+// ========================= Main =========================
 
 @group(0) @binding(0)
 var<uniform> globals: Globals;
 
 @group(0) @binding(1)
+var<storage, read> orbit_buffer: OrbitBuffer;
+
+@group(0) @binding(2)
 var tex: texture_storage_2d<rgba32float, read_write>;
 
 @compute
@@ -29,20 +75,15 @@ fn main(
     @builtin(global_invocation_id) g_invocation_id: vec3<u32>
 ) {
     let dimensions = textureDimensions(tex);
-    let aspect_ratio = f32(dimensions.x) / f32(dimensions.y);
+    let aspect_ratio = vec2<f32>(f32(dimensions.x) / f32(dimensions.y), 1.0);
+    
     let uv = vec2<f32>(
         f32(g_invocation_id.x) / f32(dimensions.x),
         f32(g_invocation_id.y) / f32(dimensions.y)
     );
 
-    // TODO: Move these to uniforms
-    let viewport_scale = 4.0;
-    let viewport_center = vec2<f32>(-0.34853774148008254, -0.6065922085831237);
+    let x = globals.scale * aspect_ratio * (uv - 0.5) - globals.orbit_offset;
+    let color = vec3<f32>(mandelbrot(x));
 
-    let viewport_size = vec2<f32>(1.0, 1.0 / aspect_ratio) * viewport_scale;
-    let euclidean_point = (uv - 0.5) * viewport_size + viewport_center;
-
-    let color = mandelbrot(euclidean_point, 2048u);
-
-    textureStore(tex, g_invocation_id.xy, vec4<f32>(color * ((sin(globals.time) + 1.0) / 2.0), 0.0, color, 1.0));
+    textureStore(tex, g_invocation_id.xy, vec4<f32>(color, 1.0));
 }

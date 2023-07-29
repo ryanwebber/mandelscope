@@ -1,5 +1,6 @@
 mod app;
 mod gui;
+mod mandelbrot;
 mod pipeline;
 mod precision;
 mod storage;

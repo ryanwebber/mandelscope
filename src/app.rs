@@ -1,9 +1,13 @@
+use glam::Vec2Swizzles;
 use rug::ops::CompleteRound;
 use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
 
+const CENTER: &'static str = "(-0.599937010146780929103754562, -0.4293244312274789964509138456)";
+const ITERATIONS: usize = 600;
+
 use crate::{
-    gui, pipeline,
+    gui, mandelbrot, pipeline,
     precision::PRECISION,
     storage::{self, Storable},
 };
@@ -52,12 +56,11 @@ pub struct Timing {
 
 pub struct Globals {
     pub timing: Timing,
-    pub viewport: Viewport,
-}
-
-pub struct Viewport {
     pub zoom: rug::Float,
+    pub radius: rug::Float,
     pub center: rug::Complex,
+    pub reference: rug::Complex,
+    pub z0: rug::Complex,
 }
 
 pub struct Pipelines {
@@ -72,6 +75,7 @@ pub struct RenderData {
 
 pub struct ComputeData {
     globals_buffer: wgpu::Buffer,
+    orbit_buffer: wgpu::Buffer,
     render_texture: wgpu::TextureView,
 }
 
@@ -87,23 +91,28 @@ impl State {
     pub async fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
-        let globals = Globals {
-            timing: {
-                let now = std::time::Instant::now();
-                Timing {
-                    time: 0.0,
-                    avs_fps: 0.0,
-                    reference_time: now,
-                    last_checkpoint: now,
-                    frames_since_last_checkpoint: 0,
-                }
-            },
-            viewport: Viewport {
-                zoom: rug::Float::with_val(PRECISION, 1.0),
-                center: rug::Complex::parse("(0.001643721971153 -0.822467633298876)")
-                    .expect("Unable to parse complex number")
-                    .complete((PRECISION, PRECISION)),
-            },
+        let globals = {
+            let center = rug::Complex::parse(CENTER)
+                .expect("Unable to parse complex number")
+                .complete((PRECISION, PRECISION));
+
+            Globals {
+                timing: {
+                    let now = std::time::Instant::now();
+                    Timing {
+                        time: 0.0,
+                        avs_fps: 0.0,
+                        reference_time: now,
+                        last_checkpoint: now,
+                        frames_since_last_checkpoint: 0,
+                    }
+                },
+                z0: rug::Complex::with_val(PRECISION, (0.0, 0.0)),
+                zoom: rug::Float::with_val(PRECISION, 2.5),
+                radius: rug::Float::with_val(PRECISION, 2.0),
+                reference: center.clone(),
+                center,
+            }
         };
 
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -195,6 +204,20 @@ impl State {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 })
             },
+            orbit_buffer: {
+                let z = globals.z0.clone();
+                let c = globals.reference.clone();
+                let r = globals.radius.clone();
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Reference orbits buffer"),
+                    contents: {
+                        let p = mandelbrot::compute_reference_orbit::<ITERATIONS>(z, c, r);
+                        let buffer = storage::Buffer(&p);
+                        &buffer.into_bytes()
+                    },
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                })
+            },
             render_texture: {
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("Output texture"),
@@ -282,33 +305,30 @@ impl State {
                     handled = true;
                 }
             }
-            WindowEvent::MouseWheel { delta, phase, .. } => match &phase {
-                winit::event::TouchPhase::Moved => {
-                    let (delta, multiplier) = match delta {
-                        winit::event::MouseScrollDelta::PixelDelta(delta) => (
-                            std::time::Duration::from_millis((delta.y * 10.0).abs() as u64),
-                            delta.y.signum(),
-                        ),
-                        _ => (std::time::Duration::ZERO, 0.0),
-                    };
+            // WindowEvent::MouseWheel { delta, phase, .. } => match &phase {
+            //     winit::event::TouchPhase::Moved => {
+            //         let delta = match delta {
+            //             winit::event::MouseScrollDelta::PixelDelta(delta) => delta.y,
+            //             _ => 0.0,
+            //         };
 
-                    if multiplier < 0.0 {
-                        self.globals.timing.reference_time -= delta;
-                    } else if multiplier > 0.0 {
-                        self.globals.timing.reference_time += delta;
-                    }
-
-                    handled = true;
-                }
-                _ => {}
-            },
+            //         self.globals.zoom += delta * 0.01;
+            //         handled = true;
+            //     }
+            //     _ => {}
+            // },
+            WindowEvent::MouseInput { .. } => {
+                // Pan if the mouse was clicked and dragged
+            }
             _ => {}
         }
 
         handled
     }
 
-    pub fn update(&mut self) {}
+    pub fn update(&mut self) {
+        self.globals.reference = self.globals.center.clone();
+    }
 
     pub fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
         self.globals.timing.time = self.globals.timing.reference_time.elapsed().as_secs_f32();
@@ -336,9 +356,9 @@ impl State {
 
         let mut cmd_buffer = Vec::new();
 
-        // Copy frame data to GPU
+        // Copy globals to GPU
         {
-            let globals_data = {
+            let bytes = {
                 let storage: storage::Globals = (&self.globals).into();
                 storage::Uniform(&storage).into_bytes()
             };
@@ -347,7 +367,7 @@ impl State {
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: None,
-                        contents: &globals_data,
+                        contents: &bytes,
                         usage: wgpu::BufferUsages::COPY_SRC,
                     });
 
@@ -356,7 +376,35 @@ impl State {
                 0,
                 &self.compute_data.globals_buffer,
                 0,
-                globals_data.len() as wgpu::BufferAddress,
+                bytes.len() as wgpu::BufferAddress,
+            );
+        }
+
+        // Copy orbit buffer to GPU
+        {
+            let bytes = {
+                let z = self.globals.z0.clone();
+                let c = self.globals.reference.clone();
+                let r = self.globals.radius.clone();
+                let p = mandelbrot::compute_reference_orbit::<ITERATIONS>(z, c, r);
+                let buffer = storage::Buffer(&p);
+                &buffer.into_bytes()
+            };
+
+            let orbit_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: &bytes,
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
+
+            encoder.copy_buffer_to_buffer(
+                &orbit_buffer,
+                0,
+                &self.compute_data.orbit_buffer,
+                0,
+                bytes.len() as wgpu::BufferAddress,
             );
         }
 
@@ -372,6 +420,10 @@ impl State {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: self.compute_data.orbit_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(
                             &self.compute_data.render_texture,
                         ),
@@ -444,7 +496,22 @@ impl State {
 
             let input = self.gui_layer.state.take_egui_input(window);
             let output = self.gui_layer.ctx.run(input, |ctx| {
-                self.gui_layer.interface.ui(ctx, &mut self.globals);
+                let input = self.gui_layer.interface.ui(ctx, &mut self.globals);
+
+                match input.mouse_scroll {
+                    Some(delta) => {
+                        self.globals.zoom += delta * 0.01;
+                    }
+                    _ => {}
+                }
+
+                match input.mouse_drag {
+                    Some(delta) => {
+                        let delta = rug::Complex::with_val(PRECISION, (-delta.x, delta.y)) * 0.001;
+                        self.globals.center += delta * self.globals.zoom.clone().exp().recip();
+                    }
+                    _ => {}
+                }
             });
 
             self.gui_layer.state.handle_platform_output(
@@ -476,17 +543,14 @@ impl State {
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("GUI Pass"),
-                color_attachments: &[
-                    // This is what @location(0) in the fragment shader targets
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: true,
-                        },
-                    }),
-                ],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: true,
+                    },
+                })],
                 depth_stencil_attachment: None,
             });
 
@@ -511,8 +575,31 @@ impl State {
 
 impl From<&Globals> for storage::Globals {
     fn from(globals: &Globals) -> Self {
+        let z = globals.z0.clone();
+        let [_a, _b, _c, _d] = mandelbrot::compute_series_coefficients(
+            z.clone(),
+            globals.reference.clone(),
+            rug::Float::with_val(PRECISION, globals.radius.clone()),
+            0, // Why aren't we using ITERATIONS here?
+        );
+
         Self {
             time: globals.timing.time,
+            scale: globals.zoom.clone().exp().recip().to_f32(),
+            radius: globals.radius.to_f32(),
+            center: {
+                let x = globals.center.real().to_f32();
+                let y = globals.center.imag().to_f32();
+                glam::f32::vec2(x, y)
+            },
+            orbit_offset: {
+                let offset = globals.reference.clone() - globals.center.clone();
+                glam::Vec2 {
+                    x: offset.real().to_f32(),
+                    y: offset.imag().to_f32(),
+                }
+            },
+            coefficients: { [_a.xyxy(), _b.xyxy(), _c.xyxy(), _d.xyxy()] },
         }
     }
 }

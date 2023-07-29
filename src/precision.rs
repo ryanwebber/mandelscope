@@ -1,1 +1,1 @@
-pub const PRECISION: u32 = 256;
+pub const PRECISION: u32 = 128;

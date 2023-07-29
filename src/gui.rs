@@ -2,6 +2,11 @@ use rug::{ops::CompleteRound, Assign};
 
 use crate::{app, precision::PRECISION};
 
+pub struct Input {
+    pub mouse_drag: Option<glam::f32::Vec2>,
+    pub mouse_scroll: Option<f32>,
+}
+
 pub struct Interface {
     info_pane: InfoPane,
     position_toolbar: PositionToolbar,
@@ -32,16 +37,42 @@ impl Interface {
         }
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, globals: &mut app::Globals) {
-        egui::Window::new("Info")
-            .default_open(true)
-            .show(ctx, |ui: &mut egui::Ui| {
-                self.info_pane.ui(ui, globals);
-            });
+    pub fn ui(&mut self, ctx: &egui::Context, globals: &mut app::Globals) -> Input {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(ctx, |ui| {
+                let input = ui.input(|i| Input {
+                    mouse_drag: {
+                        if i.pointer.is_decidedly_dragging() {
+                            let (x, y) = i.pointer.delta().into();
+                            Some((x, y).into())
+                        } else {
+                            None
+                        }
+                    },
+                    mouse_scroll: {
+                        let scroll = i.scroll_delta;
+                        if scroll.y.abs() > 0.0 {
+                            Some(scroll.y)
+                        } else {
+                            None
+                        }
+                    },
+                });
 
-        egui::panel::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
-            self.position_toolbar.ui(ui, globals);
-        });
+                egui::Window::new("Info")
+                    .default_open(true)
+                    .show(ctx, |ui: &mut egui::Ui| {
+                        self.info_pane.ui(ui, globals);
+                    });
+
+                egui::panel::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
+                    self.position_toolbar.ui(ui, globals);
+                });
+
+                input
+            })
+            .inner
     }
 }
 
@@ -63,7 +94,7 @@ impl PositionToolbar {
     fn ui(&mut self, ui: &mut egui::Ui, globals: &mut app::Globals) {
         ui.horizontal(|ui| {
             {
-                let real = globals.viewport.center.mut_real();
+                let real = globals.center.mut_real();
                 ui.label(egui::RichText::new("r").monospace());
                 self.real.ui(ui, real);
             }
@@ -71,7 +102,7 @@ impl PositionToolbar {
             ui.separator();
 
             {
-                let imag = globals.viewport.center.mut_imag();
+                let imag = globals.center.mut_imag();
                 ui.label(egui::RichText::new("i").monospace());
                 self.imag.ui(ui, imag);
             }
@@ -79,7 +110,7 @@ impl PositionToolbar {
             ui.separator();
 
             {
-                let zoom = &mut globals.viewport.zoom;
+                let zoom = &mut globals.zoom;
                 ui.label(egui::RichText::new("zoom").monospace());
                 self.zoom.ui(ui, zoom);
             }
