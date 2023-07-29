@@ -1,13 +1,9 @@
-# Fractoscope 
+# Mandelscope 
 
-A language and renderer for Euclidean space fractals build with [wgpu](https://wgpu.rs) and [wgsl](https://www.w3.org/TR/WGSL/). 
+A renderer and explorer for the mandelbrot set fractal build with [wgpu](https://wgpu.rs) and [wgsl](https://www.w3.org/TR/WGSL/). 
 
 ## Usage
 
 ```bash
-cargo run --release examples/01-mandelbrot.fs
+cargo run --release
 ```
-
-## Language
-
-_TODO_
